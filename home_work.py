@@ -1,9 +1,9 @@
 from airflow import DAG
 from datetime import datetime
+import time
 from airflow.providers.common.sql.sensors.sql import SqlSensor
 from airflow.providers.mysql.operators.mysql import MySqlOperator
 from airflow.operators.python import PythonOperator, BranchPythonOperator
-from airflow.utils.trigger_rule import TriggerRule as tr
 from airflow.utils.state import State
 import random
 
@@ -45,7 +45,8 @@ def pick_medal_task(ti):
 
 def generate_delay(ti):
     print("Starting delay...")
-    delay = random.randint(1, 100)
+    delay = random.randint(1, 30)
+    time.sleep(delay)
     print(f"Delay {delay} completed.")
 
 
@@ -61,7 +62,7 @@ with DAG(
     create_schema = MySqlOperator(
         task_id='create_schema',
         mysql_conn_id=connection_name,
-        sql="""
+        sql=f"""
         CREATE DATABASE IF NOT EXISTS {GLOBAL_NAME};
         """
     )
@@ -70,7 +71,7 @@ with DAG(
     create_table = MySqlOperator(
         task_id='create_table',
         mysql_conn_id=connection_name,
-        sql="""
+        sql=f"""
         CREATE TABLE IF NOT EXISTS {GLOBAL_NAME}.medals (
         id INT AUTO_INCREMENT PRIMARY KEY,
         medal_type VARCHAR(255) NOT NULL,
@@ -92,8 +93,8 @@ with DAG(
     calc_Bronze = MySqlOperator(
         task_id='calc_Bronze',
         mysql_conn_id=connection_name,
-        sql="""
-            INSERT INTO msolonin.medals (medal_type, count, created_at)
+        sql=f"""
+            INSERT INTO {GLOBAL_NAME}.medals (medal_type, count, created_at)
             SELECT 'Bronze', COUNT(*) , NOW()
             FROM olympic_dataset.athlete_event_results
             WHERE medal = 'Bronze';
@@ -103,8 +104,8 @@ with DAG(
     calc_Silver = MySqlOperator(
         task_id='calc_Silver',
         mysql_conn_id=connection_name,
-        sql="""
-            INSERT INTO msolonin.medals (medal_type, count, created_at)
+        sql=f"""
+            INSERT INTO {GLOBAL_NAME}.medals (medal_type, count, created_at)
             SELECT 'Silver', COUNT(*) , NOW()
             FROM olympic_dataset.athlete_event_results
             WHERE medal = 'Silver';
@@ -114,8 +115,8 @@ with DAG(
     calc_Gold = MySqlOperator(
         task_id='calc_Gold',
         mysql_conn_id=connection_name,
-        sql="""
-            INSERT INTO msolonin.medals (medal_type, count, created_at)
+        sql=f"""
+            INSERT INTO {GLOBAL_NAME}.medals (medal_type, count, created_at)
             SELECT 'Gold', COUNT(*) , NOW()
             FROM olympic_dataset.athlete_event_results
             WHERE medal = 'Gold';
@@ -128,33 +129,25 @@ with DAG(
         trigger_rule='one_success',
     )
 
-    # Сенсор для порівняння кількості рядків у таблицях `oleksiy.games` і `olympic_dataset.games`
+    # Сенсор для перевірки коректності даних
     check_for_data = SqlSensor(
         task_id='check_for_correctness',
         conn_id=connection_name,
-        sql="""
+        sql=f"""
         SELECT 1
-        FROM medals
+        FROM {GLOBAL_NAME}.medals
         WHERE TIMESTAMPDIFF(SECOND, created_at, NOW()) <= 30
         LIMIT 1;
         """,
         mode='poke',
-        poke_interval=10,
-        timeout=600,
+        poke_interval=5,
+        timeout=6,
     )
 
-    # Завдання для примусового встановлення статусу DAG як успішного в разі невдачі
-    mark_success_task = PythonOperator(
-        task_id='mark_success',
-        trigger_rule=tr.ONE_FAILED,  # Виконати, якщо хоча б одне попереднє завдання завершилося невдачею
-        python_callable=mark_dag_success,
-        provide_context=True,  # Надати контекст завдання у виклик функції
-        dag=dag,
-    )
 
     # Встановлення залежностей між завданнями
     create_schema >> create_table >> pick_medal >> pick_medal_task >> [calc_Bronze, calc_Silver, calc_Gold]
     calc_Bronze >> generate_delay
     calc_Silver >> generate_delay
     calc_Gold >> generate_delay
-    generate_delay >> check_for_data >> mark_success_task
+    generate_delay >> check_for_data
