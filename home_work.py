@@ -62,7 +62,7 @@ with DAG(
         task_id='create_schema',
         mysql_conn_id=connection_name,
         sql="""
-        CREATE DATABASE IF NOT EXISTS GLOBAL_NAME;
+        CREATE DATABASE IF NOT EXISTS {GLOBAL_NAME};
         """
     )
 
@@ -71,7 +71,7 @@ with DAG(
         task_id='create_table',
         mysql_conn_id=connection_name,
         sql="""
-        CREATE TABLE IF NOT EXISTS msolonin.medals (
+        CREATE TABLE IF NOT EXISTS {GLOBAL_NAME}.medals (
         id INT AUTO_INCREMENT PRIMARY KEY,
         medal_type VARCHAR(255) NOT NULL,
         count INT NOT NULL,
